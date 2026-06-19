@@ -6,3 +6,4 @@ python-engineio==4.13.1
 python-socketio==5.16.1
 python-dotenv==1.2.2
 simple-websocket==1.1.0
+google-generativeai==0.8.6
