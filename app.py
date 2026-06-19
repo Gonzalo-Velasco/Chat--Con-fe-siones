@@ -8,75 +8,213 @@ from telegram.ext import (
     ContextTypes
 )
 
+import google.generativeai as genai
 import threading
+import asyncio
 import requests
 import os
 from dotenv import load_dotenv
 
-# Cargar variables de entorno
+# ==================================================
+# CONFIGURACION
+# ==================================================
+
 load_dotenv()
 
-# CONFIGURACION TELEGRAM
 tokenTelegram = os.getenv("TELEGRAM_TOKEN")
 chatID = os.getenv("TELEGRAM_CHAT_ID")
+geminiApiKey = os.getenv("GEMINI_API_KEY")
 
-# CREAR APP
+
+# ==================================================
+# GEMINI
+# ==================================================
+
+genai.configure(api_key=geminiApiKey)
+
+modeloIA = genai.GenerativeModel("gemini-2.5-flash")
+
+
+def cargarContexto():
+    try:
+        with open("configuracion.txt", "r", encoding="utf-8") as archivo:
+            return archivo.read()
+    except Exception:
+        return ""
+
+
+def consultarGemini(texto):
+    contexto = cargarContexto()
+
+    prompt = f"""
+{contexto}
+
+Usuario:
+{texto}
+
+Respuesta:
+"""
+
+    try:
+        respuesta = modeloIA.generate_content(prompt)
+        return respuesta.text
+    except Exception as e:
+        print("Error Gemini:", e)
+        return "Error al consultar la IA"
+
+
+# ==================================================
+# PALABRAS CLAVE / ALERTAS
+# ==================================================
+
+palabrasClave = {
+    "ayuda": "/ayuda",
+    "emergencia": "/emergencia",
+    "urgente": "/urgente",
+    "reserva": "/reserva",
+    "comprar": "/comprar",
+    "producto": "/producto",
+    "productos": "/producto"
+}
+
+
+def detectarComandos(texto):
+    textoMinuscula = texto.lower()
+
+    for palabra, comando in palabrasClave.items():
+        if palabra in textoMinuscula:
+            mensaje = (
+                "🚨 ALERTA AUTOMATICA\n\n"
+                f"Comando:\n{comando}\n\n"
+                f"Mensaje:\n{texto}\n\n"
+                "Estado:\nPendiente de revisión."
+            )
+
+            socket.emit("emergencia", mensaje)
+
+            threading.Thread(
+                target=enviarTelegram,
+                args=(mensaje,),
+                daemon=True
+            ).start()
+
+            print("Alerta enviada")
+            break
+
+
+# ==================================================
+# FLASK / SOCKETIO
+# ==================================================
+
 app = Flask(__name__)
 
-# CONFIGURAR SOCKETIO
 socket = SocketIO(
     app,
     cors_allowed_origins="*",
-    async_mode='threading'
+    async_mode="threading"
 )
 
-# CREAR BOT TELEGRAM
+
+# ==================================================
+# BOT TELEGRAM
+# ==================================================
+
 botTelegram = ApplicationBuilder().token(tokenTelegram).build()
 
+
+# ==================================================
 # PAGINA PRINCIPAL
+# ==================================================
+
 @app.route("/")
 def index():
-    return render_template('index.html')
+    return render_template("index.html")
 
+
+# ==================================================
 # MENSAJES DESDE WEB
+# ==================================================
+
 @socket.on("message")
 def recibirMensaje(mensaje):
     print("Mensaje WEB:", mensaje)
+
     send(mensaje, broadcast=True)
+
+    detectarComandos(mensaje)
+
+    # Mensajes internos de join/leave no se envian a la IA
+    if mensaje.startswith("__join__") or mensaje.startswith("__leave__"):
+        return
+
+    pregunta = mensaje
+    if ":" in mensaje:
+        pregunta = mensaje.split(":", 1)[1].strip()
+
     threading.Thread(
-        target=enviarTelegram,
-        args=(mensaje,)
+        target=responderConIA,
+        args=(pregunta,),
+        daemon=True
     ).start()
 
+
+def responderConIA(pregunta):
+    respuesta = consultarGemini(pregunta)
+    send(f"🤖 IA: {respuesta}", broadcast=True)
+
+
+# ==================================================
 # ENVIAR A TELEGRAM
+# ==================================================
+
 def enviarTelegram(mensaje):
-    url = (
-        f"https://api.telegram.org/bot"
-        f"{tokenTelegram}/sendMessage"
-    )
+    url = f"https://api.telegram.org/bot{tokenTelegram}/sendMessage"
+
     data = {
         "chat_id": chatID,
-        "text": f"{mensaje}"
+        "text": mensaje
     }
+
     try:
-        requests.post(url, data=data)
+        requests.post(url, data=data, timeout=10)
     except Exception as e:
         print("Error Telegram:", e)
 
+
+# ==================================================
 # RECIBIR DESDE TELEGRAM
+# ==================================================
+
 async def recibirTelegram(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
-    usuario = update.message.from_user.first_name
-    mensaje = update.message.text
-    texto = f"{usuario}: {mensaje}"
-    print("Telegram:", texto)
-    socket.emit("telegram_message", texto)
+    try:
+        usuario = update.message.from_user.first_name
+        mensaje = update.message.text
+        texto = f"{usuario}: {mensaje}"
 
+        print("Telegram:", texto)
+
+        socket.emit("telegram_message", texto)
+
+        detectarComandos(texto)
+
+        respuestaIA = consultarGemini(mensaje)
+
+        await update.message.reply_text(respuestaIA)
+
+        socket.emit("message", f"🤖 IA: {respuestaIA}")
+
+    except Exception as e:
+        print("Error al procesar mensaje de Telegram:", e)
+
+
+# ==================================================
 # INICIAR BOT
+# ==================================================
+
 def iniciarBot():
-    import asyncio
     loop = None
     try:
         loop = asyncio.new_event_loop()
@@ -105,10 +243,14 @@ def iniciarBot():
                 loop.run_until_complete(botTelegram.stop())
                 loop.run_until_complete(botTelegram.shutdown())
                 loop.close()
-        except:
+        except Exception:
             pass
 
+
+# ==================================================
 # MAIN
+# ==================================================
+
 if __name__ == "__main__":
     hiloBot = threading.Thread(target=iniciarBot, daemon=True)
     hiloBot.start()
