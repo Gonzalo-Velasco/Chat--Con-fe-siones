@@ -13,7 +13,6 @@ import threading
 import requests
 import os
 from dotenv import load_dotenv
-import google.generativeai as genai
 
 # Cargar variables de entorno
 load_dotenv()
@@ -21,11 +20,6 @@ load_dotenv()
 # CONFIGURACION TELEGRAM
 tokenTelegram = os.getenv("TELEGRAM_TOKEN")
 chatID = os.getenv("TELEGRAM_CHAT_ID")
-
-# CONFIGURACION GEMINI
-geminiApiKey = os.getenv("GEMINI_API_KEY")
-genai.configure(api_key=geminiApiKey)
-modeloGemini = genai.GenerativeModel("gemini-2.5-flash")
 
 # CREAR APP
 app = Flask(__name__)
@@ -42,76 +36,6 @@ botTelegram = ApplicationBuilder().token(tokenTelegram).build()
 
 # CONTADOR DE CONFESIONES (solo para /estadisticas)
 contadorConfesiones = 0
-
-
-# ====================================================
-# GEMINI (IA)
-# ====================================================
-def cargarContextoIA():
-    try:
-        with open("configuracion.txt", "r", encoding="utf-8") as archivo:
-            return archivo.read()
-    except Exception:
-        return ""
-
-
-def consultarGemini(texto):
-    contexto = cargarContextoIA()
-
-    prompt = f"""
-{contexto}
-
-Usuario:
-{texto}
-
-Respuesta:
-"""
-
-    try:
-        respuesta = modeloGemini.generate_content(prompt)
-        return respuesta.text
-    except Exception as e:
-        print("Error Gemini:", e)
-        return "Error al consultar la IA"
-
-
-# ====================================================
-# PALABRAS CLAVE DE ALERTA
-# ====================================================
-palabrasClave = {
-    "ayuda": "/ayuda",
-    "emergencia": "/emergencia",
-    "urgente": "/urgente",
-    "reserva": "/reserva",
-    "comprar": "/comprar",
-    "producto": "/producto",
-    "productos": "/producto"
-}
-
-
-def detectarPalabrasClave(texto):
-    textoMinuscula = texto.lower()
-
-    for palabra, comando in palabrasClave.items():
-        if palabra in textoMinuscula:
-            mensaje = (
-                f"🚨 ALERTA AUTOMATICA\n\n"
-                f"Comando:\n{comando}\n\n"
-                f"Mensaje:\n{texto}\n\n"
-                f"Estado:\nPendiente de revisión."
-            )
-
-            with app.app_context():
-                socket.emit("emergencia", mensaje)
-
-            threading.Thread(
-                target=enviarTelegram,
-                args=(mensaje,),
-                daemon=True
-            ).start()
-
-            print("Alerta enviada")
-            break
 
 
 # ====================================================
@@ -187,16 +111,10 @@ def recibirMensaje(mensaje):
     contadorConfesiones += 1
     print("Mensaje WEB:", mensaje)
     send(mensaje, broadcast=True)
-
-    detectarPalabrasClave(texto)
-
     threading.Thread(
         target=enviarTelegram,
         args=(mensaje,)
     ).start()
-
-    respuestaIA = consultarGemini(texto)
-    send(f"🤖 IA: {respuestaIA}", broadcast=True)
 
 # ENVIAR A TELEGRAM
 def enviarTelegram(mensaje):
@@ -218,25 +136,11 @@ async def recibirTelegram(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
-    try:
-        usuario = update.message.from_user.first_name
-        mensaje = update.message.text
-        texto = f"{usuario}: {mensaje}"
-        print("Telegram:", texto)
-
-        with app.app_context():
-            socket.send(texto, broadcast=True)
-
-        detectarPalabrasClave(texto)
-
-        respuestaIA = consultarGemini(mensaje)
-        await update.message.reply_text(respuestaIA)
-
-        with app.app_context():
-            socket.emit("message", f"🤖 IA: {respuestaIA}")
-
-    except Exception as e:
-        print("Error en recibirTelegram:", e)
+    usuario = update.message.from_user.first_name
+    mensaje = update.message.text
+    texto = f"{usuario}: {mensaje}"
+    print("Telegram:", texto)
+    socket.send(texto, broadcast=True)
 
 
 # COMANDOS DESDE TELEGRAM (cualquier usuario del chat puede usarlos)

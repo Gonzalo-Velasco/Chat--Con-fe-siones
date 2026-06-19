@@ -189,6 +189,7 @@
       font-size: .93rem; line-height: 1.5;
       box-shadow: 0 2px 8px rgba(0,0,0,.06);
       word-break: break-word;
+      white-space: pre-line;
     }
     .msg-row.own .msg-bubble {
       background: var(--login-green); color: #fff;
@@ -239,17 +240,6 @@
     .send-btn:hover { background: var(--login-green-dark); }
     .send-btn:active { transform: scale(.92); }
     .send-btn svg { width: 19px; height: 19px; fill: #fff; }
-
-    .msg-alerta {
-      background: #ef4444; color: #fff;
-      font-weight: 700;
-      padding: 12px 16px;
-      border-radius: 12px;
-      margin: 8px 0;
-      white-space: pre-line;
-      font-size: .88rem;
-      box-shadow: 0 2px 10px rgba(239,68,68,.35);
-    }
   </style>
 </head>
 <body>
@@ -383,16 +373,6 @@
     const color = colorForUser(name);
     addMessage({ name, color, text, own });
   });
-
-  // Mensajes que llegan desde Telegram
-  socket.on('telegram_message', function(msg) {
-    addSystemMessage('📲 ' + msg);
-  });
-
-  // Alertas automaticas por palabras clave
-  socket.on('emergencia', function(msg) {
-    addAlerta(msg);
-  });
  
   // Renders
   function addSystemMessage(text) {
@@ -439,14 +419,6 @@
   }
  
   function scrollBottom() { chatMessages.scrollTop = chatMessages.scrollHeight; }
-
-  function addAlerta(text) {
-    const div = document.createElement('div');
-    div.className = 'msg-alerta';
-    div.textContent = text;
-    chatMessages.appendChild(div);
-    scrollBottom();
-  }
  
   // Toast
   function showWelcomeToast(name) {
